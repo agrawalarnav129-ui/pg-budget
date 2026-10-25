@@ -160,8 +160,11 @@ export interface Leak {
   monthly: number;
   /** Realistic monthly saving if the suggested change is made. */
   potentialSaving: number;
-  headline: string;
+  /** Needs the headline above it for context (used on the leaks card). */
   advice: string;
+  headline: string;
+  /** Stands on its own, for the report summary. */
+  summaryLine: string;
 }
 
 export function findLeaks(expenses: Transaction[], p: Period, smallLimit = 150): Leak[] {
@@ -186,6 +189,7 @@ export function findLeaks(expenses: Transaction[], p: Period, smallLimit = 150):
       potentialSaving: floorTo(monthly * 0.5),
       headline: `${ts.length} small ${cat.name.toLowerCase()} spends under ${rupees(smallLimit)} added up to ${rupees(total)}`,
       advice: `That's about ${rupees(monthly)} a month. Halving them saves ~${rupees(floorTo(monthly * 0.5))}/month.`,
+      summaryLine: `Halving your small ${cat.name.toLowerCase()} spends would save about ${rupees(floorTo(monthly * 0.5))} a month.`,
     });
   }
 
@@ -204,6 +208,7 @@ export function findLeaks(expenses: Transaction[], p: Period, smallLimit = 150):
       potentialSaving: saving,
       headline: `${Math.round(ordersPerMonth)} food delivery orders a month, averaging ${rupees(avgOrder)}`,
       advice: `Cutting to 2 a week (eat at the mess the rest) saves about ${rupees(saving)}/month.`,
+      summaryLine: `Cutting food delivery to 2 a week would save about ${rupees(saving)} a month.`,
     });
   }
 
@@ -380,7 +385,7 @@ function summarise(r: Report): string[] {
   }
 
   const leak = r.leaks[0];
-  if (leak && leak.potentialSaving > 0) lines.push(`${leak.advice}`);
+  if (leak && leak.potentialSaving > 0) lines.push(leak.summaryLine);
 
   if (r.biggestDay && r.biggestDay.total > r.variablePerDay * 4) {
     lines.push(`Biggest day: ${formatShortDate(r.biggestDay.date)} at ${rupees(r.biggestDay.total)}.`);
