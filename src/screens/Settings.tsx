@@ -137,7 +137,7 @@ export default function Settings({ data, snap, onImport }: { data: AppData; snap
 
       <SectionTitle>Your data</SectionTitle>
       <Card className="divide-y divide-line p-0">
-        <Row label="Import bank / UPI statement" sub="CSV file" onClick={onImport} action="›" />
+        <Row label="Import bank / UPI statement" sub="PDF or CSV from your bank or UPI app" onClick={onImport} action="›" />
         <Row
           label="Export backup"
           sub={settings.lastBackupAt ? `Last: ${formatShortDate(toDateKey(new Date(settings.lastBackupAt)))}` : 'Never backed up'}

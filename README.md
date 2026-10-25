@@ -48,15 +48,35 @@ These are budgeting rules of thumb, not investment advice.
 src/
   domain/      types, Mumbai-PG categories, merchant keyword rules
   engine/      planner.ts (balance, runway, split), analytics.ts (report), savePlan.ts
-  import/      CSV statement parsing, column mapping, dedupe
+  import/      CSV + PDF statement parsing, column mapping, dedupe
   db/          Dexie schema, write actions, live hooks, sample data
   components/  UI kit + dependency-free SVG charts
   screens/     Onboarding, Home, AddEntry, History, Report, Import, Settings
-scripts/make-icons.mjs   regenerates PWA icons (node scripts/make-icons.mjs)
+scripts/        make-icons.mjs (PWA icons), make-sample-statement.mjs (test fixtures)
 ```
 
-## CSV import tips
+## Importing statements
 
-- Net banking → Account statement → download **CSV** (HDFC, SBI, ICICI, Axis, Kotak).
+**PDF** (easiest) or **CSV**, from a bank or from GPay / PhonePe / Paytm.
+
+- Net banking → Account statement → download **PDF** or **CSV** (HDFC, SBI, ICICI, Axis, Kotak).
+- Password-protected PDFs are handled; the app asks for the password and never stores it.
 - Excel only? Open in Numbers → File → Export To → CSV.
-- Column mappings are remembered per bank format, re-importing the same statement skips duplicates, and "Always put X in Y" creates a merchant rule.
+- Re-importing the same statement skips what's already in, and "Always put X in Y" creates a merchant rule.
+
+### How the PDF reader works
+
+A PDF has no table structure, only text with coordinates, so `src/import/pdf.ts` rebuilds the
+table: it groups text into lines by y, merges cells by x, keeps the lines that start with a date,
+then clusters the x positions of the money figures into columns. The column whose change between
+rows equals that row's own figure is the running balance — which is what makes money in vs money
+out reliable, even across a page break or a negative balance. Wrapped narration on the next
+baseline is joined back on; headers, totals and footers are dropped.
+
+pdfjs is loaded only when you actually open a PDF, so it costs nothing on a normal app start.
+
+Fixtures for the tests are generated, not checked in by hand:
+
+```bash
+node scripts/make-sample-statement.mjs   # plain + password-protected sample statements
+```

@@ -49,7 +49,7 @@ export default function History({ data, onImport }: { data: AppData; onImport: (
       <header className="flex items-end justify-between px-1 pb-3 pt-2">
         <h1 className="text-[28px] font-bold">History</h1>
         <Button variant="ghost" className="px-0" onClick={onImport}>
-          Import CSV
+          Import statement
         </Button>
       </header>
 
@@ -98,7 +98,7 @@ export default function History({ data, onImport }: { data: AppData; onImport: (
           emoji="🧾"
           title={data.txns.length ? 'Nothing matches' : 'No entries yet'}
           body={data.txns.length ? 'Try a different search or filter.' : 'Add spends with ＋, or import a bank statement CSV.'}
-          action={!data.txns.length && <Button onClick={onImport}>Import CSV</Button>}
+          action={!data.txns.length && <Button onClick={onImport}>Import statement</Button>}
         />
       ) : (
         <div className="space-y-4">

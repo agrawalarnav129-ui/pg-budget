@@ -11,26 +11,60 @@ import {
   parseCsv,
   prepareCandidates,
   type ImportCandidate,
+  type NormalisedRow,
   type ParsedCsv,
 } from '../import/csv';
+import { PdfPasswordError, parsePdfStatement, type PdfParseResult } from '../import/pdf';
 import { formatShortDate } from '../lib/dates';
 import { rupees } from '../lib/money';
 
-type Step = 'pick' | 'map' | 'review' | 'done';
+type Step = 'pick' | 'password' | 'pdfCheck' | 'map' | 'review' | 'done';
 
 export default function Import({ data, onClose }: { data: AppData; onClose: () => void }) {
   const [step, setStep] = useState<Step>('pick');
   const [error, setError] = useState('');
   const [parsed, setParsed] = useState<ParsedCsv | null>(null);
+  const [pdfData, setPdfData] = useState<ArrayBuffer | null>(null);
+  const [pdf, setPdf] = useState<PdfParseResult | null>(null);
+  const [password, setPassword] = useState('');
+  const [positiveIsDebit, setPositiveIsDebit] = useState(true);
   const [mapping, setMapping] = useState<ColumnMapping | null>(null);
   const [candidates, setCandidates] = useState<ImportCandidate[]>([]);
   const [imported, setImported] = useState(0);
   const [busy, setBusy] = useState(false);
 
+  const readPdf = async (buffer: ArrayBuffer, opts: { password?: string; dateFormat?: 'DMY' | 'MDY'; positiveIsDebit?: boolean } = {}) => {
+    try {
+      const result = await parsePdfStatement(buffer, opts);
+      if (!result.rows.length) {
+        setError(
+          "Couldn't find any transactions in this PDF. If it's a scanned copy rather than one downloaded from your bank, the text can't be read.",
+        );
+        return;
+      }
+      setPdf(result);
+      setPassword(opts.password ?? '');
+      setStep('pdfCheck');
+    } catch (e) {
+      if (e instanceof PdfPasswordError) {
+        setError(e.wrongPassword ? 'That password didn\u2019t work. Try again.' : '');
+        setStep('password');
+        return;
+      }
+      setError("Couldn't read this PDF. Try downloading the statement again from your bank.");
+    }
+  };
+
   const onFile = async (file: File) => {
     setError('');
-    if (/\.(xlsx?|pdf)$/i.test(file.name)) {
-      setError('Please export the statement as CSV. If your bank only gives Excel, open it in Numbers and choose File → Export To → CSV.');
+    if (/\.xlsx?$/i.test(file.name)) {
+      setError('Excel files need converting first: open it in Numbers and choose File → Export To → CSV. Or download the statement as PDF instead.');
+      return;
+    }
+    if (/\.pdf$/i.test(file.name) || file.type === 'application/pdf') {
+      const buffer = await file.arrayBuffer();
+      setPdfData(buffer);
+      await readPdf(buffer);
       return;
     }
     const text = await file.text();
@@ -46,12 +80,16 @@ export default function Import({ data, onClose }: { data: AppData; onClose: () =
 
   const preview = useMemo(() => (parsed && mapping ? normaliseRows(parsed.rows, mapping) : null), [parsed, mapping]);
 
-  const toReview = async () => {
+  const toReview = (rows: NormalisedRow[]) => {
+    const existing = new Set(data.txns.map((t) => t.importHash).filter((h): h is string => Boolean(h)));
+    setCandidates(prepareCandidates(rows, existing, data.rules, data.fixedCosts));
+    setStep('review');
+  };
+
+  const csvToReview = async () => {
     if (!parsed || !mapping || !preview) return;
     await updateSettings({ importMappings: { ...data.settings.importMappings, [headerSignature(parsed.headers)]: mapping } });
-    const existing = new Set(data.txns.map((t) => t.importHash).filter((h): h is string => Boolean(h)));
-    setCandidates(prepareCandidates(preview.rows, existing, data.rules, data.fixedCosts));
-    setStep('review');
+    toReview(preview.rows);
   };
 
   const commit = async () => {
@@ -69,27 +107,123 @@ export default function Import({ data, onClose }: { data: AppData; onClose: () =
       {step === 'pick' && (
         <div className="space-y-4">
           <Card className="space-y-2 text-[14px] text-ink-2">
-            <p className="text-[15px] font-semibold text-ink">Get a CSV from your bank</p>
+            <p className="text-[15px] font-semibold text-ink">Where to get the file</p>
             <p>
-              In net banking, open <b>Account statement</b>, choose the dates, and download as <b>CSV</b>. HDFC, SBI, ICICI, Axis and
-              Kotak all offer it.
+              <b>Bank:</b> in net banking or your bank app, open <b>Account statement</b>, pick the dates and download the{' '}
+              <b>PDF</b> or <b>CSV</b>. Password-protected PDFs are fine, you'll be asked for the password.
             </p>
-            <p>If you only get Excel (.xls), open it in Numbers and export as CSV.</p>
+            <p>
+              <b>UPI apps:</b> GPay, PhonePe and Paytm each have a statement or passbook download in their settings. Import those the
+              same way to get everything in one place.
+            </p>
             <p className="text-ink-3">The file is read on your phone and never uploaded anywhere.</p>
           </Card>
           <label className="flex min-h-28 cursor-pointer flex-col items-center justify-center rounded-2xl border-2 border-dashed border-line bg-card text-center">
             <span className="text-3xl" aria-hidden>
               📄
             </span>
-            <span className="mt-1 text-[15px] font-semibold text-accent">Choose CSV file</span>
+            <span className="mt-1 text-[15px] font-semibold text-accent">Choose PDF or CSV file</span>
+            <span className="mt-0.5 text-[12px] text-ink-3">Bank statement or UPI app statement</span>
             <input
               type="file"
-              accept=".csv,text/csv,text/comma-separated-values,application/vnd.ms-excel"
+              accept=".pdf,application/pdf,.csv,text/csv,text/comma-separated-values,application/vnd.ms-excel"
               className="sr-only"
               onChange={(e) => e.target.files?.[0] && onFile(e.target.files[0])}
             />
           </label>
           {error && <p className="px-1 text-[14px] font-medium text-critical">{error}</p>}
+        </div>
+      )}
+
+      {step === 'password' && (
+        <div className="space-y-4">
+          <Card className="space-y-2 text-[14px] text-ink-2">
+            <p className="text-[15px] font-semibold text-ink">This statement is locked</p>
+            <p>
+              Banks usually set the password to something like your PAN in lower case, your date of birth as DDMMYYYY, or the two
+              joined together. The exact rule is in the email the statement came with.
+            </p>
+            <p className="text-ink-3">The password is used on this phone only to open the file, and is never saved.</p>
+          </Card>
+          <Field label="Statement password">
+            <input
+              type="password"
+              className={inputClass}
+              value={password}
+              autoFocus
+              autoComplete="off"
+              onChange={(e) => setPassword(e.target.value)}
+              onKeyDown={(e) => {
+                if (e.key === 'Enter' && password && pdfData) readPdf(pdfData, { password });
+              }}
+            />
+          </Field>
+          {error && <p className="px-1 text-[14px] font-medium text-critical">{error}</p>}
+          <Button className="w-full" disabled={!password || !pdfData} onClick={() => pdfData && readPdf(pdfData, { password })}>
+            Unlock statement
+          </Button>
+        </div>
+      )}
+
+      {step === 'pdfCheck' && pdf && (
+        <div className="space-y-4">
+          <Card className="space-y-1 text-[14px] text-ink-2">
+            <p className="text-[15px] font-semibold text-ink">Found {pdf.rows.length} transactions</p>
+            <p>Check a few look right below, then continue to pick categories.</p>
+          </Card>
+
+          <Card className="p-0">
+            <p className="px-4 pt-3 text-[13px] font-semibold text-ink-3">PREVIEW</p>
+            {pdf.rows.slice(0, 5).map((r) => (
+              <div key={r.hash} className="flex items-center gap-3 border-b border-line px-4 py-2 last:border-0">
+                <span className="w-14 shrink-0 text-[13px] text-ink-3">{formatShortDate(r.date)}</span>
+                <span className="min-w-0 flex-1 truncate text-[14px]">{r.description || '—'}</span>
+                <span className={cx('tabular text-[14px] font-semibold', r.direction === 'credit' && 'text-good-ink')}>
+                  {r.direction === 'credit' ? '+' : '−'}
+                  {rupees(r.amount)}
+                </span>
+              </div>
+            ))}
+          </Card>
+
+          <Field label="Dates read as" hint="Change this if the days and months look swapped above.">
+            <Segmented
+              value={pdf.dateFormat}
+              onChange={(dateFormat) => pdfData && readPdf(pdfData, { password, dateFormat, positiveIsDebit })}
+              options={[
+                { value: 'DMY' as const, label: 'DD/MM/YY' },
+                { value: 'MDY' as const, label: 'MM/DD/YY' },
+              ]}
+            />
+          </Field>
+
+          {pdf.directionAmbiguous && (
+            <Card className="space-y-2">
+              <p className="text-[14px] text-ink-2">
+                This statement doesn't show a running balance, so money in and money out look the same. Which is it?
+              </p>
+              <Segmented
+                value={positiveIsDebit ? 'spent' : 'received'}
+                onChange={(v) => {
+                  const next = v === 'spent';
+                  setPositiveIsDebit(next);
+                  if (pdfData) readPdf(pdfData, { password, dateFormat: pdf.dateFormat, positiveIsDebit: next });
+                }}
+                options={[
+                  { value: 'spent' as const, label: 'Money spent' },
+                  { value: 'received' as const, label: 'Money received' },
+                ]}
+              />
+            </Card>
+          )}
+
+          {pdf.errors.length > 0 && (
+            <p className="px-1 text-[13px] text-ink-3">{pdf.errors.length} lines skipped because they had no amount.</p>
+          )}
+
+          <Button className="w-full" onClick={() => toReview(pdf.rows)}>
+            Continue with {pdf.rows.length} {pdf.rows.length === 1 ? 'transaction' : 'transactions'}
+          </Button>
         </div>
       )}
 
@@ -194,7 +328,7 @@ export default function Import({ data, onClose }: { data: AppData; onClose: () =
             )}
           </Card>
 
-          <Button className="w-full" disabled={!preview.rows.length} onClick={toReview}>
+          <Button className="w-full" disabled={!preview.rows.length} onClick={csvToReview}>
             Continue with {preview.rows.length} {preview.rows.length === 1 ? 'transaction' : 'transactions'}
           </Button>
         </div>
@@ -377,7 +511,9 @@ function Review({
 
       <div className="sticky bottom-0 bg-bg pt-2">
         <Button className="w-full" disabled={!included.length || busy} onClick={onCommit}>
-          Import {included.length} {included.length === 1 ? 'transaction' : 'transactions'}
+          {included.length === 0
+            ? 'Nothing new to import'
+            : `Import ${included.length} ${included.length === 1 ? 'transaction' : 'transactions'}`}
         </Button>
       </div>
     </div>

@@ -31,6 +31,15 @@ export default defineConfig({
       },
       workbox: {
         globPatterns: ['**/*.{js,css,html,svg,png,woff2}'],
+        // The pdfjs worker is 1.2MB and only needed when importing a PDF statement, so
+        // fetch it on first use and keep it cached rather than adding it to the install.
+        runtimeCaching: [
+          {
+            urlPattern: /pdf\.worker.*\.mjs$/,
+            handler: 'CacheFirst',
+            options: { cacheName: 'pdfjs-worker', expiration: { maxEntries: 3 } },
+          },
+        ],
       },
     }),
   ],
