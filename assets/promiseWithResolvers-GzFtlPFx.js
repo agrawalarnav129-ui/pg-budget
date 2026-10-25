@@ -1,0 +1,1 @@
+typeof Promise.withResolvers!=`function`&&(Promise.withResolvers=function(){let e,t;return{promise:new Promise((n,r)=>{e=n,t=r}),resolve:e,reject:t}});
