@@ -14,7 +14,7 @@ import {
   type NormalisedRow,
   type ParsedCsv,
 } from '../import/csv';
-import { PdfPasswordError, parsePdfStatement, type PdfParseResult } from '../import/pdf';
+import { PdfPasswordError, PdfReadError, describeError, parsePdfStatement, type PdfParseResult } from '../import/pdf';
 import { formatShortDate } from '../lib/dates';
 import { rupees } from '../lib/money';
 
@@ -27,6 +27,7 @@ export default function Import({ data, onClose }: { data: AppData; onClose: () =
   const [pdfData, setPdfData] = useState<ArrayBuffer | null>(null);
   const [pdf, setPdf] = useState<PdfParseResult | null>(null);
   const [password, setPassword] = useState('');
+  const [details, setDetails] = useState('');
   const [positiveIsDebit, setPositiveIsDebit] = useState(true);
   const [mapping, setMapping] = useState<ColumnMapping | null>(null);
   const [candidates, setCandidates] = useState<ImportCandidate[]>([]);
@@ -34,12 +35,14 @@ export default function Import({ data, onClose }: { data: AppData; onClose: () =
   const [busy, setBusy] = useState(false);
 
   const readPdf = async (buffer: ArrayBuffer, opts: { password?: string; dateFormat?: 'DMY' | 'MDY'; positiveIsDebit?: boolean } = {}) => {
+    setDetails('');
     try {
       const result = await parsePdfStatement(buffer, opts);
       if (!result.rows.length) {
         setError(
-          "Couldn't find any transactions in this PDF. If it's a scanned copy rather than one downloaded from your bank, the text can't be read.",
+          "This PDF opened, but no transactions could be found in it. If it's a scanned or photographed copy rather than one downloaded from your bank, there's no text in it to read.",
         );
+        setDetails(`Opened fine, found 0 dated rows. ${navigator.userAgent}`);
         return;
       }
       setPdf(result);
@@ -51,7 +54,10 @@ export default function Import({ data, onClose }: { data: AppData; onClose: () =
         setStep('password');
         return;
       }
-      setError("Couldn't read this PDF. Try downloading the statement again from your bank.");
+      setError(
+        "Couldn't open this PDF. Tap Details below and send me that text — it says exactly what went wrong. Meanwhile a CSV statement will import fine.",
+      );
+      setDetails(`${e instanceof PdfReadError ? e.details : describeError(e)} | ${navigator.userAgent}`);
     }
   };
 
@@ -106,6 +112,7 @@ export default function Import({ data, onClose }: { data: AppData; onClose: () =
     <Sheet open onClose={onClose} title="Import statement" full>
       {step === 'pick' && (
         <div className="space-y-4">
+          <ErrorBlock error={error} details={details} />
           <Card className="space-y-2 text-[14px] text-ink-2">
             <p className="text-[15px] font-semibold text-ink">Where to get the file</p>
             <p>
@@ -131,7 +138,6 @@ export default function Import({ data, onClose }: { data: AppData; onClose: () =
               onChange={(e) => e.target.files?.[0] && onFile(e.target.files[0])}
             />
           </label>
-          {error && <p className="px-1 text-[14px] font-medium text-critical">{error}</p>}
         </div>
       )}
 
@@ -158,7 +164,7 @@ export default function Import({ data, onClose }: { data: AppData; onClose: () =
               }}
             />
           </Field>
-          {error && <p className="px-1 text-[14px] font-medium text-critical">{error}</p>}
+          <ErrorBlock error={error} details={details} />
           <Button className="w-full" disabled={!password || !pdfData} onClick={() => pdfData && readPdf(pdfData, { password })}>
             Unlock statement
           </Button>
@@ -359,6 +365,37 @@ export default function Import({ data, onClose }: { data: AppData; onClose: () =
         </div>
       )}
     </Sheet>
+  );
+}
+
+function ErrorBlock({ error, details }: { error: string; details: string }) {
+  const [copied, setCopied] = useState(false);
+  if (!error && !details) return null;
+  return (
+    <div className="space-y-2">
+      {error && <p className="px-1 text-[14px] font-medium text-critical">{error}</p>}
+      {details && (
+        <details className="rounded-xl bg-card-2 px-3 py-2">
+          <summary className="cursor-pointer text-[13px] font-medium text-ink-2">Details</summary>
+          <p className="mt-2 break-words font-mono text-[11px] leading-snug text-ink-2">{details}</p>
+          <Button
+            variant="secondary"
+            className="mt-2 min-h-9 text-[13px]"
+            onClick={async () => {
+              try {
+                await navigator.clipboard.writeText(details);
+                setCopied(true);
+                setTimeout(() => setCopied(false), 2000);
+              } catch {
+                setCopied(false);
+              }
+            }}
+          >
+            {copied ? 'Copied ✓' : 'Copy details'}
+          </Button>
+        </details>
+      )}
+    </div>
   );
 }
 

@@ -304,10 +304,35 @@ export class PdfPasswordError extends Error {
   }
 }
 
+/** Anything else that stopped us reading the file, with the detail kept for the user to report. */
+export class PdfReadError extends Error {
+  constructor(public details: string) {
+    super('Could not read PDF');
+  }
+}
+
+export function describeError(e: unknown): string {
+  const err = e as { name?: string; message?: string };
+  const name = err?.name && err.name !== 'Error' ? `${err.name}: ` : '';
+  return `${name}${err?.message ?? String(e)}`.slice(0, 300);
+}
+
 /** Read every page of a PDF into positioned text items. Throws PdfPasswordError if locked. */
 export async function extractText(data: ArrayBuffer, password?: string): Promise<TextItem[]> {
+  await import('./promiseWithResolvers');
   const pdfjs = await import('pdfjs-dist');
-  pdfjs.GlobalWorkerOptions.workerSrc = (await import('pdfjs-dist/build/pdf.worker.min.mjs?url')).default;
+
+  // Our own worker bundle, so the polyfill is installed inside the worker as well as
+  // out here. Created once and reused for later imports.
+  if (!pdfjs.GlobalWorkerOptions.workerPort) {
+    try {
+      pdfjs.GlobalWorkerOptions.workerPort = new Worker(new URL('./pdfWorker.ts', import.meta.url), {
+        type: 'module',
+      });
+    } catch (e) {
+      throw new PdfReadError(`worker: ${describeError(e)}`);
+    }
+  }
 
   const task = pdfjs.getDocument({ data: new Uint8Array(data.slice(0)), password });
   let doc;
@@ -318,20 +343,25 @@ export async function extractText(data: ArrayBuffer, password?: string): Promise
     const name = (e as { name?: string }).name;
     const code = (e as { code?: number }).code;
     if (name === 'PasswordException') throw new PdfPasswordError(code === 2);
-    throw e;
+    throw new PdfReadError(describeError(e));
   }
 
   const items: TextItem[] = [];
-  for (let p = 1; p <= doc.numPages; p++) {
-    const page = await doc.getPage(p);
-    const content = await page.getTextContent();
-    for (const item of content.items) {
-      if (!('str' in item)) continue;
-      items.push({ str: item.str, x: item.transform[4], y: item.transform[5], width: item.width, page: p });
+  try {
+    for (let p = 1; p <= doc.numPages; p++) {
+      const page = await doc.getPage(p);
+      const content = await page.getTextContent();
+      for (const item of content.items) {
+        if (!('str' in item)) continue;
+        items.push({ str: item.str, x: item.transform[4], y: item.transform[5], width: item.width, page: p });
+      }
+      page.cleanup();
     }
-    page.cleanup();
+  } catch (e) {
+    throw new PdfReadError(describeError(e));
+  } finally {
+    await task.destroy().catch(() => {});
   }
-  await task.destroy();
   return items;
 }
 
